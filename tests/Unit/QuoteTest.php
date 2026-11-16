@@ -72,4 +72,13 @@ class QuoteTest extends TestCase
 
         $this->assertSame("Tritanium\t1233000\t1000", Quote::importText($rows));
     }
+
+    public function test_window_order_puts_first_pasted_item_last(): void
+    {
+        $rows = Quote::rows([self::ITEM, ['type_id' => 35, 'name' => 'Pyerite', 'quantity' => 5]],
+            [34 => self::book([[1, 5.0]]), 35 => self::book([[2, 10.0]])], [], [], []);
+
+        $this->assertSame(['Pyerite', 'Tritanium'], array_column(Quote::windowOrder($rows), 'name'));
+        $this->assertSame("Pyerite\t9.99\t5\nTritanium\t4.99\t1000", Quote::importText(Quote::windowOrder($rows)));
+    }
 }

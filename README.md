@@ -54,6 +54,7 @@ Quick Sell is installed like any other SeAT plugin (see SeAT's
 | --- | --- |
 | 0.1 | Skeleton: package, menu entry, permission, empty page |
 | 0.2 | Core function: paste, market choice, prices at the market and Jita, price step, marks, fees, copy |
+| 0.2.1 | Rows and copied lines in the order of the Sell Items window (first pasted item at the bottom) |
 
 Item names follow SeAT: English only, from the SDE. There is no price history; Jita is the anchor.
 
