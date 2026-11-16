@@ -10,4 +10,8 @@ Route::group([
     'middleware' => ['web', 'auth', 'locale', 'can:quicksell.use'],
 ], function () {
     Route::get('/', [QuickSellController::class, 'index'])->name('seatquicksell::home');
+    Route::get('/markets', [QuickSellController::class, 'markets'])->name('seatquicksell::markets');
+    Route::post('/quote', [QuickSellController::class, 'quote'])->name('seatquicksell::quote');
+    Route::get('/status', [QuickSellController::class, 'status'])->name('seatquicksell::status');
+    Route::post('/fees', [QuickSellController::class, 'saveFees'])->name('seatquicksell::fees');
 });
