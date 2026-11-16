@@ -1,0 +1,27 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  phpunit:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        php: ['8.2', '8.3']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php: ${{ matrix.php }}
+          extensions: gmp, bcmath, intl, mbstring, pdo_sqlite, redis
+          coverage: none
+          # Composer 2.9+ refuses to install packages with known security advisories by default.
+          # SeAT 5 is built on Laravel 10, which has such advisories, so a newer Composer cannot
+          # resolve SeAT's own packages at all. Pin the Composer line the plugin is tested with;
+          # the SeAT image installs plugins with its own Composer, so this only affects CI.
+          tools: composer:2.8.12
+      - run: composer install --no-interaction --no-progress
+      - run: vendor/bin/phpunit
