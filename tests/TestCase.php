@@ -15,4 +15,12 @@ abstract class TestCase extends Orchestra
     {
         return [QuickSellServiceProvider::class];
     }
+
+    /** SQLite in memory instead of MariaDB, and the array cache instead of Redis. */
+    protected function defineEnvironment($app): void
+    {
+        $app['config']->set('database.default', 'testing');
+        $app['config']->set('database.connections.testing', ['driver' => 'sqlite', 'database' => ':memory:', 'prefix' => '']);
+        $app['config']->set('cache.default', 'array');
+    }
 }

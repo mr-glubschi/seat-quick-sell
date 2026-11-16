@@ -16,6 +16,16 @@ class ServiceProviderTest extends TestCase
         $this->assertSame(['web', 'auth', 'locale', 'can:quicksell.use'], $route->gatherMiddleware());
     }
 
+    public function test_all_endpoints_use_the_same_middleware(): void
+    {
+        foreach (['markets' => 'quick-sell/markets', 'quote' => 'quick-sell/quote', 'status' => 'quick-sell/status', 'fees' => 'quick-sell/fees'] as $name => $uri) {
+            $route = app('router')->getRoutes()->getByName('seatquicksell::' . $name);
+            $this->assertNotNull($route, $name);
+            $this->assertSame($uri, $route->uri());
+            $this->assertSame(['web', 'auth', 'locale', 'can:quicksell.use'], $route->gatherMiddleware());
+        }
+    }
+
     public function test_registers_the_use_permission(): void
     {
         $permission = config('seat.permissions.quicksell.use');

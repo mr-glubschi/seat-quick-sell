@@ -21,6 +21,8 @@ class QuickSellServiceProvider extends AbstractSeatPlugin
         $this->loadRoutesFrom(__DIR__ . '/Http/routes.php');
         $this->loadViewsFrom(__DIR__ . '/resources/views', self::NS);
         $this->loadTranslationsFrom(__DIR__ . '/resources/lang', self::NS);
+        // One table of our own: the fees a user corrected per market (quicksell_market_fees).
+        $this->loadMigrationsFrom(__DIR__ . '/database/migrations/');
     }
 
     public function register(): void
