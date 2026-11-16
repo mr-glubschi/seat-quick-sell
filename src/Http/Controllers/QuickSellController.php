@@ -294,6 +294,8 @@ class QuickSellController extends Controller
         $fmt = fn (?float $v) => $v === null ? null : number($v, 2);
 
         return $row + [
+            // SeAT's image helper: the item's icon from CCP's image server, as on SeAT's own pages.
+            'icon' => img('types', 'icon', $row['type_id'], 32, ['class' => 'img-circle eve-icon small-icon'], false),
             'fmt' => [
                 'station_sell' => $fmt($row['station_sell']),
                 'station_buy' => $fmt($row['station_buy']),
