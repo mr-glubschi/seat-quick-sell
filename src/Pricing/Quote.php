@@ -72,6 +72,15 @@ final class Quote
         return $rows;
     }
 
+    /**
+     * Rows in the order of EVE's Sell Items window: the client puts every newly added item on top, so the
+     * first pasted item ends up at the bottom. Same rule as eve-mcp's Market Helper.
+     */
+    public static function windowOrder(array $rows): array
+    {
+        return array_reverse($rows);
+    }
+
     /** Lines for "Import Item Prices": name, tab, price, tab, quantity. Rows without a price are left out. */
     public static function importText(array $rows): string
     {

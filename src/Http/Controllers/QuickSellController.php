@@ -101,7 +101,7 @@ class QuickSellController extends Controller
 
         $sellerId = $this->seller($request->input('character_id'), $docked, $characters);
         [$ownOrderIds, $ownSellTypes] = $this->ownOrders(array_keys($characters), $market, $typeIds);
-        $rows = Quote::rows($parsed['items'], $books['market'], $books['jita'], $ownOrderIds, $ownSellTypes);
+        $rows = Quote::windowOrder(Quote::rows($parsed['items'], $books['market'], $books['jita'], $ownOrderIds, $ownSellTypes));
         $fees = $this->fees($market, $sellerId);
         $totals = $fees->totals(array_values(array_filter(array_column($rows, 'value'))));
 
