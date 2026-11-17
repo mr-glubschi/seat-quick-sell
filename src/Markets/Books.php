@@ -11,23 +11,29 @@ use Glubschi\Seat\QuickSell\Jobs\StructureOrders;
  * Jita 4-4 (The Forge) is always needed as the anchor. A station in The Forge shares the jobs with Jita, one
  * request per item for both. A structure market is fetched whole, with the first character that has the
  * structure market scope; characters docked there are tried first, since they are the likeliest to have access.
+ *
+ * The market needs the books of the items and of the materials they reprocess into; Jita only those of the items.
  */
 final class Books
 {
     /**
      * Cached books.
      *
+     * @param  int[]  $typeIds  types needed at the market (items and materials)
+     * @param  int[]|null  $jitaTypeIds  types needed in Jita (the items); null = the same as $typeIds
      * @return array{market: array<int, array|null>, jita: array<int, array>, complete: bool}
      *   market: book by type, null where the market could not be read; jita: books found in the cache;
      *   complete: everything needed is cached (or known to be unreadable)
      */
-    public static function cached(Market $market, array $typeIds): array
+    public static function cached(Market $market, array $typeIds, ?array $jitaTypeIds = null): array
     {
-        $jita = OrderBooks::station(Market::JITA_STATION, $typeIds);
-        $complete = count($jita) === count($typeIds);
+        $jitaTypeIds ??= $typeIds;
+        $jita = OrderBooks::station(Market::JITA_STATION, $jitaTypeIds);
+        $complete = count($jita) === count($jitaTypeIds);
 
         if ($market->isJita()) {
-            $books = $jita;
+            $books = OrderBooks::station(Market::JITA_STATION, $typeIds);
+            $complete = count($books) === count($typeIds);
         } elseif ($market->isStructure()) {
             $books = OrderBooks::structure($market->locationId, $typeIds);
             if ($books === null) {
@@ -50,12 +56,15 @@ final class Books
     /**
      * Jobs that fetch the books missing from the cache, split by SeAT queue.
      *
+     * @param  int[]  $typeIds  types needed at the market (items and materials)
      * @param  int[]  $characterIds  the user's characters, most likely to have structure access first
+     * @param  int[]|null  $jitaTypeIds  types needed in Jita (the items); null = the same as $typeIds
      * @return array{public: RegionTypeOrders[], characters: StructureOrders[]}
      */
-    public static function jobs(Market $market, array $typeIds, array $characterIds): array
+    public static function jobs(Market $market, array $typeIds, array $characterIds, ?array $jitaTypeIds = null): array
     {
-        $missingJita = array_diff($typeIds, array_keys(OrderBooks::station(Market::JITA_STATION, $typeIds)));
+        $jitaTypeIds = $market->isJita() ? array_values(array_unique(array_merge($typeIds, $jitaTypeIds ?? []))) : ($jitaTypeIds ?? $typeIds);
+        $missingJita = array_diff($jitaTypeIds, array_keys(OrderBooks::station(Market::JITA_STATION, $jitaTypeIds)));
         $public = [];
         $characters = [];
 

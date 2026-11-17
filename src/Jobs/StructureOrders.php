@@ -8,7 +8,7 @@ use Seat\Eveapi\Jobs\AbstractAuthCharacterJob;
 use Seat\Eveapi\Models\RefreshToken;
 
 /**
- * Reads the whole market of an Upwell structure with one character's token and caches it, 10 best orders per
+ * Reads the whole market of an Upwell structure with one character's token and caches it, 20 best orders per
  * side and item.
  *
  * A SeAT authenticated character job (AbstractAuthCharacterJob): SeAT refreshes the token, checks the scope

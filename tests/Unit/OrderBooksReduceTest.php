@@ -10,7 +10,8 @@ class OrderBooksReduceTest extends TestCase
 {
     private static function order(int $id, int $location, float $price, bool $buy, int $type = 34): object
     {
-        return (object) ['order_id' => $id, 'type_id' => $type, 'location_id' => $location, 'price' => $price, 'is_buy_order' => $buy];
+        return (object) ['order_id' => $id, 'type_id' => $type, 'location_id' => $location, 'price' => $price,
+            'is_buy_order' => $buy, 'volume_remain' => 10 * $id, 'min_volume' => 1];
     }
 
     public function test_groups_sorts_and_filters(): void
@@ -24,20 +25,20 @@ class OrderBooksReduceTest extends TestCase
         ], [100]);
 
         $this->assertSame([100], array_keys($books));
-        $this->assertSame([[2, 4.0], [1, 5.0]], $books[100][34]['sell']);
-        $this->assertSame([[4, 3.5], [3, 3.0]], $books[100][34]['buy']);
+        $this->assertSame([[2, 4.0, 20, 1], [1, 5.0, 10, 1]], $books[100][34]['sell']);
+        $this->assertSame([[4, 3.5, 40, 1], [3, 3.0, 30, 1]], $books[100][34]['buy']);
     }
 
-    public function test_keeps_ten_best(): void
+    public function test_keeps_the_best(): void
     {
         $orders = [];
-        for ($i = 1; $i <= 15; $i++) {
+        for ($i = 1; $i <= 25; $i++) {
             $orders[] = self::order($i, 100, (float) $i, false);
         }
         $sell = OrderBooks::reduce($orders)[100][34]['sell'];
 
         $this->assertCount(OrderBooks::DEPTH, $sell);
-        $this->assertSame([1, 1.0], $sell[0]);
+        $this->assertSame([1, 1.0, 10, 1], $sell[0]);
     }
 
     public function test_ttl_follows_expires(): void

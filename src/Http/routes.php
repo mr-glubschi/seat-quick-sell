@@ -13,5 +13,6 @@ Route::group([
     Route::get('/markets', [QuickSellController::class, 'markets'])->name('seatquicksell::markets');
     Route::post('/quote', [QuickSellController::class, 'quote'])->name('seatquicksell::quote');
     Route::get('/status', [QuickSellController::class, 'status'])->name('seatquicksell::status');
-    Route::post('/fees', [QuickSellController::class, 'saveFees'])->name('seatquicksell::fees');
+    Route::get('/fees', [QuickSellController::class, 'fees'])->name('seatquicksell::fees');
+    Route::post('/fees/reset', [QuickSellController::class, 'resetFees'])->name('seatquicksell::fees.reset');
 });
