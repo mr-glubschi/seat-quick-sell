@@ -2,14 +2,17 @@
 
 namespace Glubschi\Seat\QuickSell\Http\Controllers;
 
+use Glubschi\Seat\QuickSell\Items\Materials;
 use Glubschi\Seat\QuickSell\Items\Parser;
 use Glubschi\Seat\QuickSell\Markets\Books;
 use Glubschi\Seat\QuickSell\Markets\Market;
 use Glubschi\Seat\QuickSell\Markets\Markets;
 use Glubschi\Seat\QuickSell\Markets\OrderBooks;
 use Glubschi\Seat\QuickSell\Models\MarketFee;
+use Glubschi\Seat\QuickSell\Pricing\Compare;
 use Glubschi\Seat\QuickSell\Pricing\Fees;
 use Glubschi\Seat\QuickSell\Pricing\Quote;
+use Glubschi\Seat\QuickSell\Pricing\Reprocess;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Bus;
@@ -25,7 +28,7 @@ use Seat\Web\Http\Controllers\Controller;
  */
 class QuickSellController extends Controller
 {
-    /** Item kinds per quote; each one can take an ESI request for the market and one for Jita. */
+    /** Item kinds per quote; each one can take an ESI request for the market and one for Jita (plus materials). */
     public const MAX_TYPES = 200;
 
     public const LAST_MARKET_SETTING = 'glubschi.quicksell.last_market';
@@ -44,6 +47,7 @@ class QuickSellController extends Controller
 
         return view('quicksell::index', [
             'characters' => $characters,
+            'mainId' => (int) auth()->user()->main_character_id,
             'preselect' => $preselect,
         ]);
     }
@@ -68,6 +72,8 @@ class QuickSellController extends Controller
             'items' => 'required|string|max:200000',
             'character_id' => 'nullable|integer',
             'no_fetch' => 'nullable|boolean',
+            'fees' => 'nullable|array',
+            'fees.*' => 'nullable|numeric|min:0|max:100',
         ]);
 
         $market = Markets::find($request->input('market'));
@@ -88,40 +94,48 @@ class QuickSellController extends Controller
         $characters = $this->characters();
         $docked = $this->dockedAt($market, $characters);
         $typeIds = array_column($parsed['items'], 'type_id');
+        $reprocessing = Materials::for($typeIds);
+        // The market needs the items and their materials, Jita only the items.
+        $marketTypeIds = array_values(array_unique(array_merge($typeIds, Materials::materialIds($reprocessing))));
 
-        $books = Books::cached($market, $typeIds);
+        $books = Books::cached($market, $marketTypeIds, $typeIds);
         if (! $books['complete'] && ! $request->boolean('no_fetch')) {
             $order = array_values(array_unique(array_merge($docked, array_keys($characters))));
-            $batches = $this->dispatch(Books::jobs($market, $typeIds, $order));
+            $batches = $this->dispatch(Books::jobs($market, $marketTypeIds, $order, $typeIds));
             if ($batches !== []) {
                 return response()->json(['status' => 'pending', 'batches' => $batches]);
             }
-            $books = Books::cached($market, $typeIds);
+            $books = Books::cached($market, $marketTypeIds, $typeIds);
         }
 
-        $sellerId = $this->seller($request->input('character_id'), $docked, $characters);
+        // Fees as entered; they become this market's last values.
+        $fees = Fees::from($market->isStructure(), (array) $request->input('fees', []));
+        MarketFee::remember(auth()->user()->id, $market->locationId, $fees);
+
+        $sellerId = $this->seller($request->input('character_id'), $characters);
+        $skills = $this->skills($sellerId, $reprocessing);
         [$ownOrderIds, $ownSellTypes] = $this->ownOrders(array_keys($characters), $market, $typeIds);
+
         $rows = Quote::windowOrder(Quote::rows($parsed['items'], $books['market'], $books['jita'], $ownOrderIds, $ownSellTypes));
-        $fees = $this->fees($market, $sellerId);
-        $totals = $fees->totals(array_values(array_filter(array_column($rows, 'value'))));
+        $compare = Compare::run($rows, $books['market'], $reprocessing, $skills, $fees, $ownOrderIds);
+        $rows = $compare['rows'];
+        // The copy button takes the items that are best put on the market.
+        $marketRows = array_values(array_filter($rows, fn ($r) => $r['best'] === 'market'));
 
         return response()->json([
             'status' => 'done',
             'market' => $market->toArray() + [
                 'denied' => $market->isStructure() && OrderBooks::isDenied($market->locationId),
             ],
-            'seller' => ['id' => $sellerId, 'name' => $characters[$sellerId] ?? null, 'docked' => in_array($sellerId, $docked, true)],
+            'seller' => ['id' => $sellerId, 'name' => $characters[$sellerId] ?? null],
+            'skills' => $this->skillNames($skills),
             'rows' => array_map([$this, 'formatRow'], $rows),
             'unknown' => $parsed['unknown'],
-            'fees' => [
-                'broker_pct' => $fees->brokerPct,
-                'scc_pct' => $fees->sccPct,
-                'sales_tax_pct' => $fees->salesTaxPct,
-                'safety_pct' => $fees->safetyPct,
-                'saved' => MarketFee::savedFor(auth()->user()->id, $market->locationId) !== [],
-            ],
-            'totals' => array_map(fn ($v) => ['raw' => $v, 'fmt' => number($v, 2)], $totals),
-            'import_text' => Quote::importText($rows),
+            'fees' => $fees->toArray(),
+            'totals' => array_map(fn ($t) => ['gross' => number($t['gross'], 0), 'net' => number($t['net'], 0), 'raw' => $t['net']], $compare['totals']),
+            'import_text' => Quote::importText($marketRows),
+            'import_text_all' => Quote::importText($rows),
+            'import_count' => count($marketRows),
         ]);
     }
 
@@ -146,32 +160,32 @@ class QuickSellController extends Controller
         return response()->json(['finished' => $finished, 'total' => $total, 'done' => min($done, $total)]);
     }
 
-    /** Saves the fees the user corrected for a market, or forgets them (reset). */
-    public function saveFees(Request $request): JsonResponse
+    /** The last fees used at a market, or the game's starting values when there are none yet. */
+    public function fees(Request $request): JsonResponse
     {
-        $request->validate([
-            'market' => 'required|string|max:40',
-            'reset' => 'nullable|boolean',
-            'broker_pct' => 'nullable|numeric|min:0|max:100',
-            'scc_pct' => 'nullable|numeric|min:0|max:100',
-            'safety_pct' => 'nullable|numeric|min:0|max:100',
+        $market = Markets::find((string) $request->query('market', ''));
+        if ($market === null) {
+            return response()->json(['message' => trans('quicksell::global.error_market')], 422);
+        }
+        $saved = MarketFee::savedFor(auth()->user()->id, $market->locationId);
+
+        return response()->json([
+            'fees' => Fees::from($market->isStructure(), $saved)->toArray(),
+            'saved' => $saved !== [],
         ]);
+    }
+
+    /** Forgets the fees saved for a market and returns the starting values. */
+    public function resetFees(Request $request): JsonResponse
+    {
+        $request->validate(['market' => 'required|string|max:40']);
         $market = Markets::find($request->input('market'));
         if ($market === null) {
             return response()->json(['message' => trans('quicksell::global.error_market')], 422);
         }
+        MarketFee::where(['user_id' => auth()->user()->id, 'location_id' => $market->locationId])->delete();
 
-        $key = ['user_id' => auth()->user()->id, 'location_id' => $market->locationId];
-        if ($request->boolean('reset')) {
-            MarketFee::where($key)->delete();
-        } else {
-            // An empty field means "use the default" (stored as null).
-            $values = array_map(fn ($v) => $v === '' || $v === null ? null : (float) $v,
-                $request->only(['broker_pct', 'scc_pct', 'safety_pct']) + ['broker_pct' => null, 'scc_pct' => null, 'safety_pct' => null]);
-            MarketFee::updateOrCreate($key, $values);
-        }
-
-        return response()->json(['ok' => true]);
+        return response()->json(['fees' => Fees::defaults($market->isStructure()), 'saved' => false]);
     }
 
     /** @return array<int, string> names of the user's characters by ID */
@@ -220,21 +234,51 @@ class QuickSellController extends Controller
         return [];
     }
 
-    /** The character whose skills set the fees: the chosen one, else one docked there, else the main character. */
-    private function seller(mixed $chosen, array $docked, array $characters): ?int
+    /** The character whose skills count for reprocessing: the chosen one, else the main character. */
+    private function seller(mixed $chosen, array $characters): ?int
     {
-        if ($chosen !== null && isset($characters[(int) $chosen])) {
+        if ($chosen !== null && $chosen !== '' && isset($characters[(int) $chosen])) {
             return (int) $chosen;
         }
-        if ($docked !== []) {
-            return $docked[0];
-        }
-        $main = auth()->user()->main_character_id;
+        $main = (int) auth()->user()->main_character_id;
         if ($main && isset($characters[$main])) {
-            return (int) $main;
+            return $main;
         }
 
         return array_key_first($characters);
+    }
+
+    /** @return array<int, int> the character's levels of the reprocessing skills these items use, by skill ID */
+    private function skills(?int $characterId, array $reprocessing): array
+    {
+        $ids = [Reprocess::REPROCESSING, Reprocess::REPROCESSING_EFFICIENCY, Reprocess::SCRAPMETAL_PROCESSING];
+        foreach ($reprocessing as $info) {
+            if ($info['ore_skill']) {
+                $ids[] = $info['ore_skill'];
+            }
+        }
+        $levels = array_fill_keys(array_unique($ids), 0);
+        if ($characterId !== null) {
+            $rows = DB::table('character_skills')->where('character_id', $characterId)
+                ->whereIn('skill_id', array_keys($levels))->pluck('active_skill_level', 'skill_id');
+            foreach ($rows as $id => $level) {
+                $levels[(int) $id] = (int) $level;
+            }
+        }
+
+        return $levels;
+    }
+
+    /** @return array<int, array{name: string, level: int}> */
+    private function skillNames(array $skills): array
+    {
+        $names = DB::table('invTypes')->whereIn('typeID', array_keys($skills))->pluck('typeName', 'typeID');
+        $out = [];
+        foreach ($skills as $id => $level) {
+            $out[] = ['name' => $names[$id] ?? (string) $id, 'level' => $level];
+        }
+
+        return $out;
     }
 
     /**
@@ -256,19 +300,6 @@ class QuickSellController extends Controller
         }
 
         return [$ids, $sellTypes];
-    }
-
-    private function fees(Market $market, ?int $sellerId): Fees
-    {
-        $skills = $sellerId === null ? collect() : DB::table('character_skills')->where('character_id', $sellerId)
-            ->whereIn('skill_id', [Fees::ACCOUNTING, Fees::BROKER_RELATIONS])->pluck('active_skill_level', 'skill_id');
-
-        return Fees::for(
-            $market->isStructure(),
-            (int) ($skills[Fees::ACCOUNTING] ?? 0),
-            (int) ($skills[Fees::BROKER_RELATIONS] ?? 0),
-            MarketFee::savedFor(auth()->user()->id, $market->locationId),
-        );
     }
 
     /** @return string[] IDs of the dispatched batches, remembered in the session for status() */
@@ -306,6 +337,12 @@ class QuickSellController extends Controller
                 'quantity' => number($row['quantity'], 0),
                 'vs_jita_pct' => $row['vs_jita_pct'] === null ? null : number($row['vs_jita_pct'], 1),
             ],
+            'ways_fmt' => array_map(fn ($w) => $w === null ? null : [
+                'net' => number($w['net'], 0),
+                'per_unit' => number($w['per_unit'], 2),
+                'sold' => isset($w['sold']) ? number($w['sold'], 0) : null,
+                'yield' => isset($w['yield']) ? number($w['yield'] * 100, 1) : null,
+            ], $row['ways']),
         ];
     }
 }

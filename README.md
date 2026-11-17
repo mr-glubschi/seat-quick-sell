@@ -8,29 +8,37 @@ back into the **Import Item Prices** button of EVE's *Sell Items* window.
 
 ## What it does
 
-- **Market:** where your characters are docked, the last market you used, the five trade hubs, or a search
-  over NPC stations and the structures SeAT knows.
-- **Prices:** for every item the best sell and buy order at that market and in Jita 4-4. Jita sell is the
-  anchor price.
-- **Your price:** the lowest sell order of other players, one valid EVE price step lower (at most four
-  significant digits, as the client allows). Your own orders are ignored.
-- **Marks:** blue row = nobody else sells it there, so the price is Jita sell; an icon when you already have
-  a sell order there; an icon when a buy order pays at least your price; the percentage against Jita sell in
-  green (above) or red (below).
-- **Fees:** broker's fee, SCC surcharge, sales tax and safety tax with the totals, so you can check them
-  against the *Sell Items* window. Sales tax and the NPC broker's fee come from the seller's Accounting and
-  Broker Relations skills; standings and structure broker's fees are not in ESI, so you can correct and save
-  them per market.
-- **Copy:** one line per item, `name<TAB>price<TAB>quantity`.
+Quick Sell shows three ways to turn the pasted items into ISK at the chosen market, side by side, plus the best
+mix (the best way of every item):
+
+- **Sell now:** into the buy orders at this market, best price first, sales tax only.
+- **Reprocess:** the materials of each item (SeAT's SDE: `invTypeMaterials`, `portionSize`), times the yield,
+  minus the reprocessing tax, sold into the buy orders at this market. Yield after the EVE University wiki:
+  ore and ice `base x (1 + 3% Reprocessing) x (1 + 2% Reprocessing Efficiency) x (1 + 2% ore skill)`, everything
+  else `base x (1 + 2% Scrapmetal Processing)`. Whole portions only (100 units of ore).
+- **Market:** a sell order one valid EVE price step (at most four significant digits) under the lowest sell
+  order of other players, minus broker's fee, SCC surcharge, sales and safety tax. Your own orders are ignored.
+
+Also:
+
+- **Market choice:** where your characters are docked, the last market you used, the five trade hubs, or a
+  search over NPC stations and the structures SeAT knows.
+- **Character:** your main by default; its skills count for reprocessing.
+- **Fees:** all entered by hand as the game shows them (sales tax, broker's fee, SCC, safety tax, reprocessing
+  tax and base yield); the last values are kept per market.
+- **Marks:** blue row = nobody else sells it there, so the market price is Jita sell; icons for your own sell
+  order and for a buy order paying at least your price; the percentage against Jita sell.
+- **Copy:** the items whose best way is the market (or all), one line per item, `name<TAB>price<TAB>quantity`,
+  in the order of the *Sell Items* window.
 
 ### Data and storage
 
 | Data | Source | Kept |
 | --- | --- | --- |
 | Item names | SeAT's SDE (`invTypes`, English) | read only |
-| Stations, structures, where characters are docked, own orders, skills | SeAT's tables | read only |
-| Order books (10 best orders per side and item) | ESI, fetched by SeAT jobs: `/markets/{region}/orders/` for stations and Jita, `/markets/structures/{id}/` with a character token | Laravel cache, exactly as long as ESI's `Expires` header says (5 minutes) |
-| Fees you corrected per market | you | table `quicksell_market_fees` |
+| Stations, structures, where characters are docked, own orders, skills, reprocessing materials | SeAT's tables | read only |
+| Order books (20 best orders per side and item, with volumes), for the items and their materials | ESI, fetched by SeAT jobs: `/markets/{region}/orders/` for stations and Jita, `/markets/structures/{id}/` with a character token | Laravel cache, exactly as long as ESI's `Expires` header says (5 minutes) |
+| Fees and reprocessing values you last used per market | you | table `quicksell_market_fees` |
 | Last used market | you | SeAT user setting |
 
 Structure markets need a character with the `esi-markets.structure_markets.v1` scope (part of SeAT's
@@ -56,6 +64,7 @@ Quick Sell is installed like any other SeAT plugin (see SeAT's
 | 0.2 | Core function: paste, market choice, prices at the market and Jita, price step, marks, fees, copy |
 | 0.2.1 | Rows and copied lines in the order of the Sell Items window (first pasted item at the bottom) |
 | 0.3.0 | Reset button, page layout always visible, item icons (SeAT image helper), clearer legend |
+| 0.4.0 | Sell now vs reprocess vs market with best mix, all fees by hand per market, main character by default |
 
 Item names follow SeAT: English only, from the SDE. There is no price history; Jita is the anchor.
 

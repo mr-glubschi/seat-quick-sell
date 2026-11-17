@@ -7,41 +7,47 @@ use PHPUnit\Framework\TestCase;
 
 class FeesTest extends TestCase
 {
-    public function test_skill_formulas(): void
+    public function test_starting_values(): void
     {
-        $this->assertEqualsWithDelta(7.5, Fees::salesTaxPct(0), 1e-9);
-        $this->assertEqualsWithDelta(3.375, Fees::salesTaxPct(5), 1e-9);
-        $this->assertEqualsWithDelta(3.0, Fees::npcBrokerPct(0), 1e-9);
-        $this->assertEqualsWithDelta(1.5, Fees::npcBrokerPct(5), 1e-9);
+        $npc = Fees::from(false, []);
+        $this->assertSame(7.5, $npc->salesTaxPct);
+        $this->assertSame(3.0, $npc->brokerPct);
+        $this->assertSame(0.0, $npc->sccPct);
+        $this->assertSame(5.0, $npc->reprocessTaxPct);
+        $this->assertSame(50.0, $npc->reprocessOrePct);
+
+        $structure = Fees::from(true, []);
+        $this->assertNull($structure->brokerPct);
+        $this->assertSame(0.5, $structure->sccPct);
+        $this->assertSame(0.0, $structure->reprocessTaxPct);
     }
 
-    public function test_npc_station_defaults(): void
+    public function test_entered_values_win_and_empty_fields_fall_back(): void
     {
-        $fees = Fees::for(false, 5, 5);
-        $this->assertSame(0.0, $fees->sccPct);
-        $this->assertEqualsWithDelta(1.5, $fees->brokerPct, 1e-9);
-        $this->assertSame(0.0, $fees->safetyPct);
-    }
+        $fees = Fees::from(true, ['sales_tax_pct' => '3.375', 'broker_pct' => '1', 'scc_pct' => '', 'unknown' => 9]);
 
-    public function test_structure_needs_broker_fee_entered(): void
-    {
-        $fees = Fees::for(true, 5, 5);
-        $this->assertNull($fees->brokerPct);
+        $this->assertSame(3.375, $fees->salesTaxPct);
+        $this->assertSame(1.0, $fees->brokerPct);
         $this->assertSame(0.5, $fees->sccPct);
+        $this->assertSame(Fees::FIELDS, array_keys($fees->toArray()));
+    }
 
-        $saved = Fees::for(true, 5, 5, ['broker_pct' => 1.0, 'safety_pct' => 2.0]);
-        $this->assertSame(1.0, $saved->brokerPct);
-        $this->assertSame(2.0, $saved->safetyPct);
-        $this->assertSame(0.5, $saved->sccPct);
+    public function test_instant_and_market_net(): void
+    {
+        $fees = new Fees(3.375, 1.0, 0.5, 0.0, 0.0, 50.0, 50.0);
+
+        $this->assertEqualsWithDelta(966250.0, $fees->instantNet(1000000.0), 1e-6);
+        // 1,000,000 - 0.5% SCC - 3.375% tax - 1% broker
+        $this->assertEqualsWithDelta(951250.0, $fees->marketNet(1000000.0), 1e-6);
+        // broker's fee at least 100 ISK
+        $this->assertEqualsWithDelta(5000 * (1 - 0.03875) - 100, $fees->marketNet(5000.0), 1e-6);
     }
 
     public function test_totals_with_minimum_broker_fee(): void
     {
-        $fees = new Fees(sccPct: 0.5, brokerPct: 1.0, salesTaxPct: 3.375, safetyPct: 0.0);
-        $t = $fees->totals([1000000.0, 5000.0]);
+        $t = (new Fees(3.375, 1.0, 0.5, 0.0, 0.0, 50.0, 50.0))->totals([1000000.0, 5000.0]);
 
         $this->assertSame(1005000.0, $t['gross']);
-        // 1% of 1,000,000 = 10,000; 1% of 5,000 = 50, raised to the 100 ISK minimum.
         $this->assertEqualsWithDelta(10100.0, $t['broker'], 1e-6);
         $this->assertEqualsWithDelta(5025.0, $t['scc'], 1e-6);
         $this->assertEqualsWithDelta(33918.75, $t['sales_tax'], 1e-6);
@@ -50,7 +56,6 @@ class FeesTest extends TestCase
 
     public function test_unknown_broker_fee_counts_nothing(): void
     {
-        $t = (new Fees(0.5, null, 3.375, 0.0))->totals([1000.0]);
-        $this->assertSame(0.0, $t['broker']);
+        $this->assertSame(0.0, (new Fees(3.375, null, 0.5, 0.0, 0.0, 50.0, 50.0))->brokerFee(1000.0));
     }
 }

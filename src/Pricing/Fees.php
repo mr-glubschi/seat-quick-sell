@@ -3,67 +3,99 @@
 namespace Glubschi\Seat\QuickSell\Pricing;
 
 /**
- * Fees of sell orders as the Sell Items window lists them, in percent of the order value.
+ * Fees and reprocessing settings of one market, in percent, as the user entered them.
  *
- * - Sales tax: 7.5% minus 11% of that per level of Accounting (skill 16622; its SDE description says
- *   "Each level of skill reduces sales tax by 11%. Sales tax starts at 7.5%."), so 3.375% at level V.
- * - Broker's fee in an NPC station: 3% minus 0.3 points per level of Broker Relations (skill 3446, SDE
- *   description). Standings lower it further and are not included, so this is a suggestion the user can correct.
- * - Broker's fee in an Upwell structure: set by the owner and not available through ESI; the user enters it.
- * - SCC surcharge: 0.5% in structures (EVE University wiki, "Trading").
- * - Safety tax: shown by the client, 0% unless entered.
+ * Since v0.4.0 every value is entered by hand and the last values are saved per user and market: standings,
+ * structure owners and implants change them in ways ESI does not show, and the game shows the real values in
+ * the Sell Items and Reprocessing windows. Until a market has saved values, the game's starting values are used:
+ *
+ * - sales tax 7.5% (before Accounting), broker's fee 3% in NPC stations (before Broker Relations and
+ *   standings), unknown in structures (set by the owner);
+ * - SCC surcharge 0.5% in structures (EVE University wiki, "Trading"); safety tax 0%;
+ * - reprocessing tax 5% in NPC stations at zero standings, 0% in structures until entered; reprocessing base
+ *   50% (EVE University wiki, "Reprocessing").
+ *
  * The broker's fee is at least 100 ISK per order.
  */
 final class Fees
 {
-    public const ACCOUNTING = 16622;
-
-    public const BROKER_RELATIONS = 3446;
-
     public const MIN_BROKER_FEE = 100.0;
 
-    public const STRUCTURE_SCC_PCT = 0.5;
+    /** The values a user enters, in the order the page shows them. */
+    public const FIELDS = [
+        'sales_tax_pct', 'broker_pct', 'scc_pct', 'safety_pct',
+        'reprocess_tax_pct', 'reprocess_ore_pct', 'reprocess_scrap_pct',
+    ];
 
-    /**
-     * @param  float|null  $brokerPct  null = unknown (structure fee not entered yet); no broker's fee is counted
-     */
     public function __construct(
-        public readonly float $sccPct,
-        public readonly ?float $brokerPct,
         public readonly float $salesTaxPct,
+        public readonly ?float $brokerPct,
+        public readonly float $sccPct,
         public readonly float $safetyPct,
+        public readonly float $reprocessTaxPct,
+        public readonly float $reprocessOrePct,
+        public readonly float $reprocessScrapPct,
     ) {
     }
 
-    public static function salesTaxPct(int $accounting): float
+    /** @return array<string, float|null> starting values of a market without saved fees */
+    public static function defaults(bool $structure): array
     {
-        return 7.5 * (1 - 0.11 * $accounting);
+        return [
+            'sales_tax_pct' => 7.5,
+            'broker_pct' => $structure ? null : 3.0,
+            'scc_pct' => $structure ? 0.5 : 0.0,
+            'safety_pct' => 0.0,
+            'reprocess_tax_pct' => $structure ? 0.0 : 5.0,
+            'reprocess_ore_pct' => 50.0,
+            'reprocess_scrap_pct' => 50.0,
+        ];
     }
 
-    public static function npcBrokerPct(int $brokerRelations): float
+    /** @param  array<string, float|int|string|null>  $values  entered values; missing ones fall back to the defaults */
+    public static function from(bool $structure, array $values): self
     {
-        return 3 - 0.3 * $brokerRelations;
+        $v = array_merge(self::defaults($structure), array_filter(
+            array_intersect_key($values, array_flip(self::FIELDS)), fn ($x) => $x !== null && $x !== ''));
+        $f = fn (string $k) => $v[$k] === null ? null : (float) $v[$k];
+
+        return new self($f('sales_tax_pct'), $f('broker_pct'), $f('scc_pct'), $f('safety_pct'),
+            $f('reprocess_tax_pct'), $f('reprocess_ore_pct'), $f('reprocess_scrap_pct'));
+    }
+
+    public function toArray(): array
+    {
+        return [
+            'sales_tax_pct' => $this->salesTaxPct,
+            'broker_pct' => $this->brokerPct,
+            'scc_pct' => $this->sccPct,
+            'safety_pct' => $this->safetyPct,
+            'reprocess_tax_pct' => $this->reprocessTaxPct,
+            'reprocess_ore_pct' => $this->reprocessOrePct,
+            'reprocess_scrap_pct' => $this->reprocessScrapPct,
+        ];
+    }
+
+    /** ISK left of an instant sale (into buy orders): only the sales tax applies. */
+    public function instantNet(float $gross): float
+    {
+        return $gross * (1 - $this->salesTaxPct / 100);
+    }
+
+    /** Broker's fee of one sell order. */
+    public function brokerFee(float $orderValue): float
+    {
+        return $this->brokerPct ? max(self::MIN_BROKER_FEE, $orderValue * $this->brokerPct / 100) : 0.0;
+    }
+
+    /** ISK left of one sell order once it has sold: minus broker's fee, SCC surcharge, sales and safety tax. */
+    public function marketNet(float $orderValue): float
+    {
+        return $orderValue * (1 - ($this->sccPct + $this->salesTaxPct + $this->safetyPct) / 100) - $this->brokerFee($orderValue);
     }
 
     /**
-     * Fees for a market. Saved values (entered by the user for this market) win over the defaults.
-     *
-     * @param  array{broker_pct?: float|null, scc_pct?: float|null, safety_pct?: float|null}  $saved
-     */
-    public static function for(bool $structure, int $accounting, int $brokerRelations, array $saved = []): self
-    {
-        $broker = $saved['broker_pct'] ?? ($structure ? null : self::npcBrokerPct($brokerRelations));
-
-        return new self(
-            sccPct: (float) ($saved['scc_pct'] ?? ($structure ? self::STRUCTURE_SCC_PCT : 0.0)),
-            brokerPct: $broker === null ? null : (float) $broker,
-            salesTaxPct: self::salesTaxPct($accounting),
-            safetyPct: (float) ($saved['safety_pct'] ?? 0.0),
-        );
-    }
-
-    /**
-     * ISK of each fee for a list of order values (price x quantity per order).
+     * ISK of each fee for a list of sell orders (price x quantity per order), as the Sell Items window adds them up.
      *
      * @param  float[]  $orderValues
      * @return array{gross: float, scc: float, broker: float, sales_tax: float, safety: float, net: float}
@@ -71,12 +103,7 @@ final class Fees
     public function totals(array $orderValues): array
     {
         $gross = array_sum($orderValues);
-        $broker = 0.0;
-        if ($this->brokerPct) {
-            foreach ($orderValues as $value) {
-                $broker += max(self::MIN_BROKER_FEE, $value * $this->brokerPct / 100);
-            }
-        }
+        $broker = array_sum(array_map([$this, 'brokerFee'], $orderValues));
         $scc = $gross * $this->sccPct / 100;
         $salesTax = $gross * $this->salesTaxPct / 100;
         $safety = $gross * $this->safetyPct / 100;

@@ -8,16 +8,19 @@ use Illuminate\Support\Facades\Cache;
 /**
  * Order books in Laravel's cache (Redis in SeAT), kept exactly as long as ESI says its data is valid.
  *
- * Only the jobs write here; the page only reads. A book keeps the 10 best sell and buy orders of an item at
- * one place as [order_id, price] pairs, best first: enough to skip the user's own orders and find the price
- * to undercut, small enough to cache whole structure markets. Keys carry the author and package prefix,
+ * Only the jobs write here; the page only reads. A book keeps the 20 best sell and buy orders of an item at
+ * one place as [order_id, price, volume_remain, min_volume], best first: enough to skip the user's own orders,
+ * find the price to undercut and sell a stack into the buy orders, small enough to cache whole structure markets.
+ * Keys carry the author and package prefix,
  * as SeAT's development tips ask for Redis records.
  */
 final class OrderBooks
 {
-    public const PREFIX = 'glubschi.quicksell.';
+    /** v2: books carry order volumes since v0.4.0, so books cached by older versions are not read. */
+    public const PREFIX = 'glubschi.quicksell.v2.';
 
-    public const DEPTH = 10;
+    /** Best orders kept per side: enough to sell a stack into several buy orders. */
+    public const DEPTH = 20;
 
     /** Used when a response carries no usable Expires header (ESI caches market orders for 5 minutes). */
     public const DEFAULT_TTL = 300;
@@ -40,7 +43,8 @@ final class OrderBooks
     /**
      * Groups raw ESI orders into books per location and type.
      *
-     * @param  iterable<object>  $orders  ESI order objects (order_id, type_id, location_id, price, is_buy_order)
+     * @param  iterable<object>  $orders  ESI order objects (order_id, type_id, location_id, price, is_buy_order,
+     *                                    volume_remain, min_volume)
      * @param  int[]|null  $locations  keep only these locations (null = all)
      * @return array<int, array<int, array{sell: array, buy: array}>>  [location][type] => book
      */
@@ -54,7 +58,9 @@ final class OrderBooks
             }
             $side = $o->is_buy_order ? 'buy' : 'sell';
             $books[$o->location_id][$o->type_id] ??= ['sell' => [], 'buy' => []];
-            $books[$o->location_id][$o->type_id][$side][] = [(int) $o->order_id, (float) $o->price];
+            $books[$o->location_id][$o->type_id][$side][] = [
+                (int) $o->order_id, (float) $o->price, (int) ($o->volume_remain ?? 0), (int) ($o->min_volume ?? 1),
+            ];
         }
         foreach ($books as &$types) {
             foreach ($types as &$book) {

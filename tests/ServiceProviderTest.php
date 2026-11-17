@@ -18,7 +18,7 @@ class ServiceProviderTest extends TestCase
 
     public function test_all_endpoints_use_the_same_middleware(): void
     {
-        foreach (['markets' => 'quick-sell/markets', 'quote' => 'quick-sell/quote', 'status' => 'quick-sell/status', 'fees' => 'quick-sell/fees'] as $name => $uri) {
+        foreach (['markets' => 'quick-sell/markets', 'quote' => 'quick-sell/quote', 'status' => 'quick-sell/status', 'fees' => 'quick-sell/fees', 'fees.reset' => 'quick-sell/fees/reset'] as $name => $uri) {
             $route = app('router')->getRoutes()->getByName('seatquicksell::' . $name);
             $this->assertNotNull($route, $name);
             $this->assertSame($uri, $route->uri());
